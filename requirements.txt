@@ -1,0 +1,10 @@
+# Runtime dependencies. Tested against Python 3.8+.
+
+# Imported directly by pattern.py and generator.py.
+numpy>=1.21
+matplotlib>=3.4
+
+# Listed in this project's original setup instructions but not imported by any
+# module in this repository. Kept for parity with the reference environment;
+# safe to drop if you only run the code here.
+scikit-image>=0.19

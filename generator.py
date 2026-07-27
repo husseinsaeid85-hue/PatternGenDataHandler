@@ -1,30 +1,57 @@
+"""Batch loader for a directory of ``.npy`` images with JSON labels.
+
+``ImageGenerator`` is the data-feeding half of this repository: it reads images
+off disk once, then hands out fixed-size batches of ``(images, labels)`` on
+each call to :meth:`ImageGenerator.next`, applying optional resizing, shuffling
+and augmentation on the way out. It keeps track of how many full passes over
+the dataset have been made so training loops can query the current epoch.
+"""
+
 import os.path
 import json
+import glob
 import numpy as np
 import matplotlib.pyplot as plt
-import glob
-# # In this exercise task you will implement an image generator. Generator objects in python are defined as having a next function.
-# # This next function returns the next generated object. In our case it returns the input of a neural network each time it gets called.
-# # This input consists of a batch of images and its corresponding labels.
+
 
 class ImageGenerator:
-    def __init__(self, file_path, label_path, batch_size, image_size, rotation=False, mirroring=False, shuffle=False):
-        # Define all members of your generator class object as global members here.
-        # These need to include:
-        # the batch size
-        # the image size
-        # flags for different augmentations and whether the data should be shuffled for each epoch
-        # Also depending on the size of your data-set you can consider loading all images into memory here already.
-        # The labels are stored in json format and can be directly loaded as dictionary.
-        # Note that the file names correspond to the dicts of the label dictionary.
+    """Yields batches of images and labels from a directory of ``.npy`` files.
 
-        # self.class_dict = {0: 'airplane', 1: 'automobile', 2: 'bird', 3: 'cat', 4: 'deer', 5: 'dog', 6: 'frog',
-        #                    7: 'horse', 8: 'ship', 9: 'truck'}
+    Images are expected to be individual ``.npy`` arrays named by their integer
+    index (``0.npy``, ``1.npy``, ...) inside ``file_path``. ``label_path``
+    points at a JSON file mapping those same indices, as strings, to integer
+    class ids -- for example ``{"0": 6, "1": 9, ...}``.
 
+    All images are loaded into memory during construction, which is fine for
+    the small sample dataset shipped with this repository.
+
+    Sampling is without replacement within an epoch: each call to :meth:`next`
+    draws a fresh batch from the indices not yet used, and once the pool is
+    exhausted the epoch counter advances and the pool is refilled.
+
+    Args:
+        file_path: Directory containing the ``.npy`` image files.
+        label_path: Path to the JSON file holding the index-to-class mapping.
+        batch_size: Number of images returned per call to :meth:`next`.
+        image_size: Target shape as ``[height, width, channels]``; channels of
+            3 means RGB.
+        rotation: If ``True``, randomly rotate images by 90, 180 or 270 degrees.
+        mirroring: If ``True``, randomly flip images horizontally or vertically.
+        shuffle: If ``True``, shuffle the dataset order on each call.
+
+    Attributes:
+        image_list: All images loaded from ``file_path``, in index order.
+        labels: The parsed contents of ``label_path``.
+        epochs: Number of complete passes made over the dataset so far.
+        class_dict: Mapping from integer class id to human-readable class name.
+    """
+
+    def __init__(self, file_path, label_path, batch_size, image_size,
+                 rotation=False, mirroring=False, shuffle=False):
         self.file_path = file_path
         self.label_path = label_path
         self.batch_size = batch_size
-        self.image_size = image_size   #[height,width,channel] ex: ch=3 -> RGB image
+        self.image_size = image_size   # [height, width, channel] ex: ch=3 -> RGB image
         self.rotation = rotation
         self.mirroring = mirroring
         self.shuffle = shuffle
@@ -36,18 +63,34 @@ class ImageGenerator:
         self.class_dict = {0: 'airplane', 1: 'automobile', 2: 'bird', 3: 'cat', 4: 'deer', 5: 'dog', 6: 'frog',
                            7: 'horse', 8: 'ship', 9: 'truck'}
 
-        #loading image files
+        # Load the image files, ordered by their numeric file name so that an
+        # image's position in image_list matches its key in the label file.
         files = sorted(glob.glob(os.path.join(self.file_path, "*.npy")),
                        key=lambda x: int(os.path.basename(x).split(".")[0]))
         self.image_list = [np.load(f) for f in files]
 
-        # loading labels
+        # Load the labels
         with open(self.label_path, 'r') as f:
             self.labels = json.load(f)
 
+        # Pool of sample indices still unused in the current epoch.
         self.n_sample = np.arange(len(self.image_list))
 
     def next(self):
+        """Return the next batch of images and labels.
+
+        Resizes any image that does not already match ``image_size``, optionally
+        reshuffles the dataset, then draws ``batch_size`` sample indices from the
+        pool of indices not yet used this epoch. When fewer than ``batch_size``
+        samples remain, the batch is topped up with samples reused from the start
+        of the epoch, the epoch counter is incremented and the pool is refilled.
+        Mirroring and rotation, when enabled, are applied per image.
+
+        Returns:
+            A ``(images, labels)`` tuple of NumPy arrays, where ``images`` has
+            shape ``(batch_size, *image_size)`` and ``labels`` has shape
+            ``(batch_size,)``.
+        """
         np.random.seed(0)
 
         # resize option
@@ -114,17 +157,25 @@ class ImageGenerator:
         im_arrays = np.array(images)
         lab_arrays = np.array(labels)
 
-        tuple_array = tuple((im_arrays, lab_arrays))
-        return tuple_array
+        return im_arrays, lab_arrays
 
     def current_epoch(self):
+        """Return the number of complete passes made over the dataset so far."""
         return self.epochs
 
-    def class_name(self, x):
-        return self.class_dict.get((x))
+    def class_name(self, label):
+        """Map an integer class id to its human-readable name.
 
+        Args:
+            label: Integer class id, as stored in the label file.
+
+        Returns:
+            The class name, or ``None`` if the id is not in ``class_dict``.
+        """
+        return self.class_dict.get(label)
 
     def show(self):
+        """Draw one batch and display it in a grid of labelled subplots."""
         images, labels = self.next()
         fig = plt.figure()
         for i, (image, title) in enumerate(zip(images, labels)):
